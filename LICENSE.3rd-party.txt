@@ -523,4 +523,5 @@ yawc 0.3.3
             defined by the Mozilla Public License, v. 2.0.
 
 
-Each of these libraries have their own dependencies with their own licenses. Visit the repositories for each librarie for info on their dependencies.
+Each of these libraries have their own dependencies with their own licenses.
+Visit the repositories for each librarie for info on their dependencies.
