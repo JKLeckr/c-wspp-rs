@@ -2,7 +2,7 @@ use futures::SinkExt;
 
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::net::TcpStream;
 use tokio::runtime::Builder;
@@ -14,6 +14,8 @@ use yawc::{Frame, MaybeTlsStream, Options, WebSocket, WebSocketError};
 
 use crate::logging;
 use crate::result::WsppResult;
+
+const CLOSE_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
 pub enum Event {
@@ -112,6 +114,7 @@ async fn connection_worker(
     };
 
     let mut closing_requested = false;
+    let mut close_started_at: Option<Instant> = None;
 
     loop {
         let mut should_stop = false;
@@ -143,6 +146,9 @@ async fn connection_worker(
                     }
                     Command::Close { code, reason } => {
                         closing_requested = true;
+                        if close_started_at.is_none() {
+                            close_started_at = Some(Instant::now());
+                        }
                         let reason_bytes = reason.unwrap_or_default().into_bytes();
                         if let Err(err) = client
                             .send(Frame::close(CloseCode::from(code), reason_bytes))
@@ -172,6 +178,12 @@ async fn connection_worker(
         }
 
         if should_stop || disconnected {
+            let _ = event_tx.send(Event::Close);
+            return;
+        }
+
+        if close_timed_out(close_started_at, Instant::now(), CLOSE_WAIT_TIMEOUT) {
+            logging::emit(2, "close handshake timed out; forcing closed state");
             let _ = event_tx.send(Event::Close);
             return;
         }
@@ -217,8 +229,18 @@ async fn connection_worker(
     }
 }
 
+fn close_timed_out(started_at: Option<Instant>, now: Instant, timeout: Duration) -> bool {
+    match started_at {
+        Some(started) => now.duration_since(started) >= timeout,
+        None => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::close_timed_out;
     use super::WorkerStartError;
     use crate::result::WsppResult;
 
@@ -232,5 +254,26 @@ mod tests {
     fn start_error_maps_runtime_init() {
         let err = WorkerStartError::RuntimeInit(std::io::Error::other("runtime"));
         assert_eq!(err.to_wspp_result(), WsppResult::IoError);
+    }
+
+    #[test]
+    fn close_timeout_only_after_threshold() {
+        let start = Instant::now();
+        assert!(!close_timed_out(
+            Some(start),
+            start + Duration::from_secs(4),
+            Duration::from_secs(5)
+        ));
+        assert!(close_timed_out(
+            Some(start),
+            start + Duration::from_secs(5),
+            Duration::from_secs(5)
+        ));
+    }
+
+    #[test]
+    fn close_timeout_is_false_without_close_request() {
+        let now = Instant::now();
+        assert!(!close_timed_out(None, now, Duration::from_secs(5)));
     }
 }
