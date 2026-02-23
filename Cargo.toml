@@ -1,0 +1,28 @@
+[package]
+name = "c-wspp-rs"
+version = "0.1.0"
+edition = "2024"
+authors = ["JKLeckr"]
+license = "BSD-2-Clause"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = "1.0"
+env_logger = { version = "0.11.8", default-features = false }
+futures = "0.3.31"
+log = "0.4.29"
+url = "2.5.8"
+yawc = "0.3.2"
+
+[dependencies.tokio]
+version = "1.49.0"
+default-features = false
+features = [
+    "rt",
+    "macros",
+    "net",
+    "time",
+    "io-util",
+]
