@@ -240,8 +240,8 @@ fn close_timed_out(started_at: Option<Instant>, now: Instant, timeout: Duration)
 mod tests {
     use std::time::{Duration, Instant};
 
-    use super::close_timed_out;
     use super::WorkerStartError;
+    use super::close_timed_out;
     use crate::result::WsppResult;
 
     #[test]
