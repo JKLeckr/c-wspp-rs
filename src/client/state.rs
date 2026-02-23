@@ -5,5 +5,4 @@ pub enum WsState {
     Connected = 2,
     Closing = 3,
     Closed = 4,
-    Unknown = -1,
 }

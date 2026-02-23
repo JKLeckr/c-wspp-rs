@@ -40,3 +40,63 @@ pub fn emit(level: i32, msg: &str) {
     let handler: OnLogCallback = unsafe { std::mem::transmute(handler_raw) };
     handler(level, c_msg.as_ptr());
 }
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::CStr;
+    use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+    use std::sync::{Mutex, OnceLock};
+
+    use super::{emit, set_log_handler, set_log_level};
+
+    static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    static LAST_LEVEL: AtomicI32 = AtomicI32::new(-1);
+
+    extern "C" fn test_logger(level: i32, msg: *const i8) {
+        let _ = unsafe { CStr::from_ptr(msg) };
+        LAST_LEVEL.store(level, Ordering::Relaxed);
+        CALLS.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn reset() {
+        CALLS.store(0, Ordering::Relaxed);
+        LAST_LEVEL.store(-1, Ordering::Relaxed);
+        set_log_handler(Some(test_logger));
+    }
+
+    #[test]
+    fn respects_level_filter() {
+        let _guard = TEST_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("lock poisoned");
+
+        reset();
+        set_log_level(1);
+        emit(3, "hidden");
+        emit(1, "shown");
+
+        assert_eq!(CALLS.load(Ordering::Relaxed), 1);
+        assert_eq!(LAST_LEVEL.load(Ordering::Relaxed), 1);
+        set_log_handler(None);
+    }
+
+    #[test]
+    fn clamps_loglevel_values() {
+        let _guard = TEST_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("lock poisoned");
+
+        reset();
+        set_log_level(99);
+        emit(5, "shown at trace");
+        assert_eq!(CALLS.load(Ordering::Relaxed), 1);
+
+        set_log_level(-10);
+        emit(1, "hidden at off");
+        assert_eq!(CALLS.load(Ordering::Relaxed), 1);
+        set_log_handler(None);
+    }
+}

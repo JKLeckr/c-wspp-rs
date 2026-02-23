@@ -17,3 +17,33 @@ impl WsppResult {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::WsppResult;
+
+    #[test]
+    fn keeps_public_codes() {
+        assert_eq!(WsppResult::Ok.to_ffi() as i32, WsppResult::Ok as i32);
+        assert_eq!(
+            WsppResult::InvalidState.to_ffi() as i32,
+            WsppResult::InvalidState as i32
+        );
+        assert_eq!(
+            WsppResult::InvalidArgument.to_ffi() as i32,
+            WsppResult::InvalidArgument as i32
+        );
+    }
+
+    #[test]
+    fn maps_extended_codes_to_unknown() {
+        assert_eq!(
+            WsppResult::IoError.to_ffi() as i32,
+            WsppResult::Unknown as i32
+        );
+        assert_eq!(
+            WsppResult::ProtocolError.to_ffi() as i32,
+            WsppResult::Unknown as i32
+        );
+    }
+}
