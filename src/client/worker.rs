@@ -13,6 +13,7 @@ use yawc::frame::OpCode;
 use yawc::{Frame, MaybeTlsStream, Options, WebSocket, WebSocketError};
 
 use crate::logging;
+use crate::result::WsppResult;
 
 #[derive(Debug)]
 pub enum Event {
@@ -32,15 +33,44 @@ pub enum Command {
     Shutdown,
 }
 
+#[derive(Debug)]
+pub enum WorkerStartError {
+    InvalidUrl(url::ParseError),
+    RuntimeInit(std::io::Error),
+}
+
+impl WorkerStartError {
+    pub fn to_wspp_result(&self) -> WsppResult {
+        match self {
+            Self::InvalidUrl(_) => WsppResult::InvalidArgument,
+            Self::RuntimeInit(_) => WsppResult::IoError,
+        }
+    }
+}
+
+impl std::fmt::Display for WorkerStartError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidUrl(err) => write!(f, "invalid url: {err}"),
+            Self::RuntimeInit(err) => write!(f, "runtime init failed: {err}"),
+        }
+    }
+}
+
+impl std::error::Error for WorkerStartError {}
+
 pub fn spawn_ws_worker(
     uri: String,
     compression: bool,
-) -> Result<(mpsc::Sender<Command>, mpsc::Receiver<Event>), anyhow::Error> {
+) -> Result<(mpsc::Sender<Command>, mpsc::Receiver<Event>), WorkerStartError> {
     let (cmd_tx, cmd_rx) = mpsc::channel();
     let (event_tx, event_rx) = mpsc::channel();
 
-    let rt = Builder::new_current_thread().enable_all().build()?;
-    let url = Url::parse(uri.as_str())?;
+    let rt = Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(WorkerStartError::RuntimeInit)?;
+    let url = Url::parse(uri.as_str()).map_err(WorkerStartError::InvalidUrl)?;
 
     std::thread::spawn(move || {
         rt.block_on(connection_worker(url, compression, event_tx, cmd_rx));
@@ -114,9 +144,16 @@ async fn connection_worker(
                     Command::Close { code, reason } => {
                         closing_requested = true;
                         let reason_bytes = reason.unwrap_or_default().into_bytes();
-                        let _ = client
+                        if let Err(err) = client
                             .send(Frame::close(CloseCode::from(code), reason_bytes))
-                            .await;
+                            .await
+                        {
+                            if !err.is_closed() {
+                                let _ = event_tx.send(Event::Error(err.to_string()));
+                            }
+                            let _ = event_tx.send(Event::Close);
+                            return;
+                        }
                     }
                     Command::Shutdown => {
                         let _ = client
@@ -177,5 +214,23 @@ async fn connection_worker(
             }
             Err(_) => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WorkerStartError;
+    use crate::result::WsppResult;
+
+    #[test]
+    fn start_error_maps_invalid_url() {
+        let err = WorkerStartError::InvalidUrl(url::ParseError::RelativeUrlWithoutBase);
+        assert_eq!(err.to_wspp_result(), WsppResult::InvalidArgument);
+    }
+
+    #[test]
+    fn start_error_maps_runtime_init() {
+        let err = WorkerStartError::RuntimeInit(std::io::Error::other("runtime"));
+        assert_eq!(err.to_wspp_result(), WsppResult::IoError);
     }
 }

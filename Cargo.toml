@@ -9,7 +9,6 @@ license = "BSD-2-Clause"
 crate-type = ["cdylib"]
 
 [dependencies]
-anyhow = "1.0"
 futures = "0.3.31"
 url = "2.5.8"
 yawc = "0.3.2"

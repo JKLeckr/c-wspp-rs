@@ -34,7 +34,7 @@ fn ffi_result(res: Result<WsppResult, WsppResult>) -> WsppResult {
     }
 }
 
-unsafe fn cstr(ptr: *const c_char) -> Result<&'static str, WsppResult> {
+unsafe fn cstr<'a>(ptr: *const c_char) -> Result<&'a str, WsppResult> {
     if ptr.is_null() {
         return Err(WsppResult::InvalidArgument);
     }
@@ -46,6 +46,9 @@ unsafe fn cstr(ptr: *const c_char) -> Result<&'static str, WsppResult> {
 
 unsafe fn data_slice<'a>(data: *const c_void, len: u64) -> Result<&'a [u8], WsppResult> {
     let len_usize = usize::try_from(len).map_err(|_| WsppResult::InvalidArgument)?;
+    if len_usize == 0 {
+        return Ok(&[]);
+    }
     if len_usize > 0 && data.is_null() {
         return Err(WsppResult::InvalidArgument);
     }
@@ -236,5 +239,45 @@ pub extern "C" fn wspp_set_error_handler(ws: *mut WsppWs, f: Option<OnErrorCallb
 pub extern "C" fn wspp_set_pong_handler(ws: *mut WsppWs, f: Option<OnPongCallback>) {
     if let Some(ws) = unsafe { ws_mut(ws) } {
         ws.callbacks.on_pong = f;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::{CString, c_void};
+
+    use super::{WsppResult, cstr, data_slice};
+
+    #[test]
+    fn cstr_rejects_null() {
+        let result = unsafe { cstr(std::ptr::null()) };
+        assert_eq!(result, Err(WsppResult::InvalidArgument));
+    }
+
+    #[test]
+    fn cstr_rejects_invalid_utf8() {
+        let bytes = [0xFF_u8, 0x00_u8];
+        let result = unsafe { cstr(bytes.as_ptr() as *const i8) };
+        assert_eq!(result, Err(WsppResult::InvalidArgument));
+    }
+
+    #[test]
+    fn cstr_accepts_utf8() {
+        let msg = CString::new("hello").expect("valid cstr");
+        let result = unsafe { cstr(msg.as_ptr()) };
+        assert_eq!(result, Ok("hello"));
+    }
+
+    #[test]
+    fn data_slice_validates_null_for_nonzero_len() {
+        let result = unsafe { data_slice(std::ptr::null::<c_void>(), 1) };
+        assert_eq!(result, Err(WsppResult::InvalidArgument));
+    }
+
+    #[test]
+    fn data_slice_allows_null_for_zero_len() {
+        let result = unsafe { data_slice(std::ptr::null::<c_void>(), 0) };
+        assert!(result.is_ok());
+        assert_eq!(result.expect("slice expected").len(), 0);
     }
 }

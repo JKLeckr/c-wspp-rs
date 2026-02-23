@@ -54,7 +54,7 @@ impl WsppWsImpl {
             Err(err) => {
                 self.state = WsState::Closed;
                 logging::emit(1, &format!("worker spawn failed: {err}"));
-                Err(WsppResult::Unknown)
+                Err(err.to_wspp_result())
             }
         }
     }
@@ -95,7 +95,7 @@ impl WsppWsImpl {
                 code,
                 reason: Some(reason.to_owned()),
             })
-            .map_err(|_| WsppResult::Unknown)?;
+            .map_err(|_| WsppResult::IoError)?;
 
         self.state = WsState::Closing;
         Ok(WsppResult::Ok)
@@ -131,7 +131,7 @@ impl WsppWsImpl {
         }
 
         let sender = self.cmd_tx.as_ref().ok_or(WsppResult::InvalidState)?;
-        sender.send(cmd).map_err(|_| WsppResult::Unknown)?;
+        sender.send(cmd).map_err(|_| WsppResult::IoError)?;
         Ok(WsppResult::Ok)
     }
 
@@ -176,5 +176,53 @@ impl WsppWsImpl {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+
+    use super::{Event, WsState, WsppWsImpl};
+    use crate::result::WsppResult;
+
+    #[test]
+    fn close_maps_disconnected_sender_to_io_error() {
+        let mut ws = WsppWsImpl::new("ws://127.0.0.1:18765/ws", true);
+        ws.state = WsState::Connected;
+        let (tx, rx) = mpsc::channel();
+        drop(rx);
+        ws.cmd_tx = Some(tx);
+
+        let res = ws.close(1000, "bye");
+        assert_eq!(res, Err(WsppResult::IoError));
+    }
+
+    #[test]
+    fn send_maps_disconnected_sender_to_io_error() {
+        let mut ws = WsppWsImpl::new("ws://127.0.0.1:18765/ws", true);
+        ws.state = WsState::Connected;
+        let (tx, rx) = mpsc::channel();
+        drop(rx);
+        ws.cmd_tx = Some(tx);
+
+        let res = ws.send_message("hello");
+        assert_eq!(res, Err(WsppResult::IoError));
+    }
+
+    #[test]
+    fn error_event_closes_and_cleans_up() {
+        let mut ws = WsppWsImpl::new("ws://127.0.0.1:18765/ws", true);
+        ws.state = WsState::Connected;
+        let (cmd_tx, _cmd_rx) = mpsc::channel();
+        let (_event_tx, event_rx) = mpsc::channel();
+        ws.cmd_tx = Some(cmd_tx);
+        ws.event_rx = Some(event_rx);
+
+        ws.dispatch(Event::Error("x".to_string()));
+
+        assert!(matches!(ws.state, WsState::Closed));
+        assert!(ws.cmd_tx.is_none());
+        assert!(ws.event_rx.is_none());
     }
 }

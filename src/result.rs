@@ -11,10 +11,7 @@ pub enum WsppResult {
 
 impl WsppResult {
     pub fn to_ffi(self) -> Self {
-        match self {
-            Self::Ok | Self::InvalidState | Self::InvalidArgument => self,
-            _ => Self::Unknown,
-        }
+        self
     }
 }
 
@@ -23,7 +20,7 @@ mod tests {
     use super::WsppResult;
 
     #[test]
-    fn keeps_public_codes() {
+    fn keeps_core_codes() {
         assert_eq!(WsppResult::Ok.to_ffi() as i32, WsppResult::Ok as i32);
         assert_eq!(
             WsppResult::InvalidState.to_ffi() as i32,
@@ -36,14 +33,14 @@ mod tests {
     }
 
     #[test]
-    fn maps_extended_codes_to_unknown() {
+    fn keeps_extended_codes() {
         assert_eq!(
             WsppResult::IoError.to_ffi() as i32,
-            WsppResult::Unknown as i32
+            WsppResult::IoError as i32
         );
         assert_eq!(
             WsppResult::ProtocolError.to_ffi() as i32,
-            WsppResult::Unknown as i32
+            WsppResult::ProtocolError as i32
         );
     }
 }

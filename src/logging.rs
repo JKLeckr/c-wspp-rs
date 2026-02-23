@@ -1,5 +1,6 @@
 use std::ffi::CString;
-use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use std::sync::RwLock;
+use std::sync::atomic::{AtomicI32, Ordering};
 
 use crate::callback::OnLogCallback;
 
@@ -7,11 +8,12 @@ const LOG_OFF: i32 = 0;
 const LOG_TRACE: i32 = 5;
 
 static LOG_LEVEL: AtomicI32 = AtomicI32::new(1);
-static LOG_HANDLER: AtomicUsize = AtomicUsize::new(0);
+static LOG_HANDLER: RwLock<Option<OnLogCallback>> = RwLock::new(None);
 
 pub fn set_log_handler(handler: Option<OnLogCallback>) {
-    let value = handler.map(|f| f as usize).unwrap_or(0);
-    LOG_HANDLER.store(value, Ordering::Relaxed);
+    if let Ok(mut slot) = LOG_HANDLER.write() {
+        *slot = handler;
+    }
 }
 
 pub fn set_log_level(level: i32) {
@@ -27,17 +29,19 @@ pub fn emit(level: i32, msg: &str) {
         return;
     }
 
-    let handler_raw = LOG_HANDLER.load(Ordering::Relaxed);
-    if handler_raw == 0 {
+    let handler = match LOG_HANDLER.read() {
+        Ok(slot) => *slot,
+        Err(_) => None,
+    };
+    let Some(handler) = handler else {
         return;
-    }
+    };
 
     let c_msg = match CString::new(msg) {
         Ok(s) => s,
         Err(_) => return,
     };
 
-    let handler: OnLogCallback = unsafe { std::mem::transmute(handler_raw) };
     handler(level, c_msg.as_ptr());
 }
 
@@ -97,6 +101,34 @@ mod tests {
         set_log_level(-10);
         emit(1, "hidden at off");
         assert_eq!(CALLS.load(Ordering::Relaxed), 1);
+        set_log_handler(None);
+    }
+
+    #[test]
+    fn handler_updates_are_thread_safe() {
+        let _guard = TEST_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("lock poisoned");
+
+        reset();
+        set_log_level(5);
+
+        let toggler = std::thread::spawn(|| {
+            for _ in 0..500 {
+                set_log_handler(Some(test_logger));
+                set_log_handler(None);
+            }
+        });
+        let emitter = std::thread::spawn(|| {
+            for _ in 0..1000 {
+                emit(1, "race");
+            }
+        });
+
+        toggler.join().expect("toggler panicked");
+        emitter.join().expect("emitter panicked");
+
         set_log_handler(None);
     }
 }
